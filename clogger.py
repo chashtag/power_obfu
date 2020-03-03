@@ -26,7 +26,6 @@ class Logger(object):
         self.log.setLevel(level)
         console = logging.StreamHandler(consolefh)
         console.setLevel(level)
-        formatter = logging.Formatter('%(levelname)s: [%(asctime)s] -- %(message)s')
         console.setFormatter(color_formatter)
         self.log.addHandler(console)
         if not logpath:
@@ -37,25 +36,31 @@ class Logger(object):
         else:
             _logpath = logpath
         if logtofile:
-            fh = logging.handlers.RotatingFileHandler(_logpath.format(__name__.split('.')[0]), maxBytes=10485760, backupCount=5)
+            formatter = logging.Formatter('%(levelname)s: [%(asctime)s] -- %(message)s')
+            fh = logging.handlers.RotatingFileHandler(_logpath.format('Power_Obfu.log'), maxBytes=10485760, backupCount=5)
             fh.setLevel(level)
             fh.setFormatter(formatter)
-            
             self.log.addHandler(fh)
         #self.log.info('Started {0}'.format(os.path.basename(__name__)))
         
-    def error(self,msg):
+    def error(self, msg):
         return self.log.error(msg)
 
-    def info(self,msg):
+    def info(self, msg):
         return self.log.info(msg)
 
-    def warn(self,msg):
+    def warn(self, msg):
         return self.log.warn(msg)
 
-    def debug(self,msg):
+    def debug(self, msg):
         return self.log.debug(msg)
 
-    def crit(self,msg):
+    def crit(self, msg):
         return self.log.critical(msg)
+    
+    def set_level(self, level):
+        for h in self.log.handlers:
+            h.setLevel(level.upper())
+        self.log.setLevel(level.upper())
+        return True
         
